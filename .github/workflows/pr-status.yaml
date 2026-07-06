@@ -2,6 +2,11 @@ name: PR to In Review
 
 on:
   workflow_call:
+    secrets:
+      PROJECT_APP_ID:
+        required: true
+      PROJECT_APP_PRIVATE_KEY:
+        required: true
 
 jobs:
   in-review:
@@ -10,12 +15,13 @@ jobs:
       !github.event.pull_request.draft &&
       github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Generate token from GitHub App
         id: app_token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.PROJECT_APP_ID }}
+          client-id: ${{ secrets.PROJECT_APP_ID }}
           private-key: ${{ secrets.PROJECT_APP_PRIVATE_KEY }}
           owner: washu-tag
 
@@ -26,7 +32,6 @@ jobs:
           PROJECT_NUMBER: "2" # Project number from github.com/orgs/washu-tag/projects/N
           PR_ID: ${{ github.event.pull_request.node_id }}
         run: |
-          # Resolve project, Status field, and "In Review" option by name (no stored IDs)
           gh api graphql -f query='
             query($org: String!, $number: Int!) {
               organization(login: $org) {
@@ -42,10 +47,15 @@ jobs:
             }' -f org="$ORG" -F number="$PROJECT_NUMBER" > project.json
 
           PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
-          FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .id' project.json)
-          OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name=="In Review") | .id' project.json)
+          FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name | ascii_downcase == "status") | .id' project.json)
+          OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name | ascii_downcase == "status") | .options[] | select(.name | ascii_downcase == "in review") | .id' project.json)
 
-          # Add PR to the project (idempotent; returns the existing item if already added)
+          if [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
+            echo "::error::Could not resolve Status field or In Review option on project $PROJECT_NUMBER. Check the field/option names on the board."
+            exit 1
+          fi
+
+          # idempotent - returns the existing item if already added
           ITEM_ID=$(gh api graphql -f query='
             mutation($project: ID!, $content: ID!) {
               addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } }
