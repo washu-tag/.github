@@ -47,8 +47,8 @@ jobs:
             }' -f org="$ORG" -F number="$PROJECT_NUMBER" > project.json
 
           PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
-          FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name | ascii_downcase == "status") | .id' project.json)
-          OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name | ascii_downcase == "status") | .options[] | select(.name | ascii_downcase == "in review") | .id' project.json)
+          FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select((.name // "") | ascii_downcase == "status") | .id' project.json)
+          OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select((.name // "") | ascii_downcase == "status") | .options[] | select((.name // "") | ascii_downcase == "in review") | .id' project.json)
 
           if [ -z "$FIELD_ID" ] || [ -z "$OPTION_ID" ]; then
             echo "::error::Could not resolve Status field or In Review option on project $PROJECT_NUMBER. Check the field/option names on the board."
