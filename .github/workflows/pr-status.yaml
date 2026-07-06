@@ -1,0 +1,60 @@
+name: PR to In Review
+
+on:
+  workflow_call:
+
+jobs:
+  in-review:
+    # Human, review-ready PRs only. Drafts and bots (Dependabot, Renovate, etc.) stay in Backlog.
+    if: >
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate token from GitHub App
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.PROJECT_APP_ID }}
+          private-key: ${{ secrets.PROJECT_APP_PRIVATE_KEY }}
+          owner: washu-tag
+
+      - name: Move PR to In Review
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          ORG: washu-tag
+          PROJECT_NUMBER: "2" # Project number from github.com/orgs/washu-tag/projects/N
+          PR_ID: ${{ github.event.pull_request.node_id }}
+        run: |
+          # Resolve project, Status field, and "In Review" option by name (no stored IDs)
+          gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                    }
+                  }
+                }
+              }
+            }' -f org="$ORG" -F number="$PROJECT_NUMBER" > project.json
+
+          PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
+          FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .id' project.json)
+          OPTION_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name=="In Review") | .id' project.json)
+
+          # Add PR to the project (idempotent; returns the existing item if already added)
+          ITEM_ID=$(gh api graphql -f query='
+            mutation($project: ID!, $content: ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } }
+            }' -f project="$PROJECT_ID" -f content="$PR_ID" --jq '.data.addProjectV2ItemById.item.id')
+
+          gh api graphql -f query='
+            mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project, itemId: $item, fieldId: $field,
+                value: { singleSelectOptionId: $option }
+              }) { projectV2Item { id } }
+            }' -f project="$PROJECT_ID" -f item="$ITEM_ID" -f field="$FIELD_ID" -f option="$OPTION_ID"
